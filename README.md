@@ -109,6 +109,21 @@ python aggregate_results.py results/
 | topology_code | Original code (H/h/B/b) |
 | sequence | Amino acid sequence |
 
+## Example Data
+
+Example input and output files are provided in the `examples/` directory:
+
+- `examples/chunk_000.fasta` - Sample input (150 proteins from UniProt)
+- `examples/chunk_000/tmbed_summary.tsv` - Protein-level summary statistics
+- `examples/chunk_000/tmbed_tm_regions.tsv` - Detailed TM region coordinates
+
+### How to Read the Example Files
+
+**View FASTA file (first 3 proteins):**
+```bash
+head -9 examples/chunk_000.fasta
+# Shows: &gt;header, sequence, empty line (repeated for each protein)
+
 ## TMbed Topology Codes
 
 | Code | Type | Description |
