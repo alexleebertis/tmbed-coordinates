@@ -26,7 +26,7 @@ cd TMbed && pip install -e .
 pip install pandas numpy biopython requests
 ```
 
-**Configure path:** Edit `tmbed_coords.py` line 17:
+**Configure path:** Edit `tmbed_coords.py` and set `TMBED_REPO`:
 ```python
 TMBED_REPO = Path("/path/to/your/TMbed")
 ```
@@ -44,9 +44,26 @@ python tsv_to_fasta.py -i proteins.tsv -c "Protein ID" -o output.fasta --skip-co
 - `--output`: Output FASTA file
 - `--skip-contam`: Skip contaminant rows
 
-### 2. Run TMbed
+### 2. Split Large FASTA (Optional)
+For large datasets, split into chunks:
+```bash
+python split_fasta.py -i proteins.fasta -o chunks/ -n 150
+```
+
+**Arguments:**
+- `--input`: Input FASTA file
+- `--output`: Output directory for chunks
+- `--chunk-size`: Sequences per chunk (default: 150)
+
+### 3. Run TMbed
+Single file:
 ```bash
 python tmbed_coords.py -f proteins.fasta -o results/ --batch-size 2
+```
+
+Batch processing (multiple chunks):
+```bash
+./batch_process.sh chunks/ results/
 ```
 
 **Arguments:**
@@ -56,29 +73,7 @@ python tmbed_coords.py -f proteins.fasta -o results/ --batch-size 2
 - `--skip-tmbed`: Use existing predictions.txt
 - `--predictions`: Path to existing predictions.txt
 
-### 3. Batch Processing (Large Datasets)
-
-Split into chunks:
-```bash
-mkdir -p chunks
-python split_fasta.py -i proteins.fasta -o chunks/ -n 150
-python -c "
-from Bio import SeqIO
-import math
-seqs = list(SeqIO.parse('proteins.fasta', 'fasta'))
-chunk_size = 150
-for i in range(math.ceil(len(seqs)/chunk_size)):
-    chunk = seqs[i*chunk_size:(i+1)*chunk_size]
-    SeqIO.write(chunk, f'chunks/chunk_{i:03d}.fasta', 'fasta')
-"
-```
-
-Process all chunks:
-```bash
-./batch_process.sh chunks/ results/
-```
-
-Aggregate results:
+### 4. Aggregate Results
 ```bash
 python aggregate_results.py results/
 ```
@@ -113,7 +108,7 @@ python aggregate_results.py results/
 
 Example input and output files are provided in the `examples/` directory:
 
-- `examples/chunk_000.fasta` - Sample input (150 proteins from UniProt)
+- `examples/chunk_000.fasta` - Sample input proteins from UniProt
 - `examples/chunk_000/tmbed_summary.tsv` - Protein-level summary statistics
 - `examples/chunk_000/tmbed_tm_regions.tsv` - Detailed TM region coordinates
 
@@ -122,7 +117,39 @@ Example input and output files are provided in the `examples/` directory:
 **View FASTA file (first 3 proteins):**
 ```bash
 head -9 examples/chunk_000.fasta
-# Shows: &gt;header, sequence, empty line (repeated for each protein)
+# Format: >header line, sequence line, empty line (repeated)
+```
+
+**View summary statistics:**
+```bash
+column -t examples/chunk_000/tmbed_summary.tsv | head -10
+# Key columns:
+#   - protein_id: UniProt accession (e.g., P00533)
+#   - tm_count: Number of TM domains detected
+#   - has_tm: True if protein has ≥1 TM domain
+#   - is_multipass: True if protein has ≥2 TM domains
+```
+
+**View TM region coordinates:**
+```bash
+column -t examples/chunk_000/tmbed_tm_regions.tsv | head -10
+# Key columns:
+#   - start/end: 1-indexed amino acid positions (UniProt-style)
+#   - type: TMH (alpha-helix), TMB (beta-barrel), or re-entrant variants
+#   - sequence: Amino acids in the transmembrane region
+```
+
+**Quick stats from example:**
+```bash
+# Count proteins with TM domains
+grep -c "True" examples/chunk_000/tmbed_summary.tsv
+
+# Count total TM regions
+tail -n +2 examples/chunk_000/tmbed_tm_regions.tsv | wc -l
+
+# Find multi-pass proteins (≥2 TM domains)
+awk -F'\t' '$8=="True"' examples/chunk_000/tmbed_summary.tsv | head
+```
 
 ## TMbed Topology Codes
 
