@@ -60,6 +60,7 @@ python tmbed_coords.py -f proteins.fasta -o results/ --batch-size 2
 
 Split into chunks:
 ```bash
+python split_fasta.py -i proteins.fasta -o chunks/ -n 150
 mkdir -p chunks
 python -c "
 from Bio import SeqIO
