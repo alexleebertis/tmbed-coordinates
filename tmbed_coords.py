@@ -14,7 +14,7 @@ from Bio import SeqIO
 import re
 import argparse
 
-TMBED_REPO = Path("/path/to/your/TMbed")
+TMBED_REPO = Path("/home/alexlee/work/onboarding/surfaceome_topology/TMbed")
 
 def run_tmbed_embed_predict(fasta_path, output_dir, batch_size=2):
     """Run TMbed embed + predict pipeline"""
