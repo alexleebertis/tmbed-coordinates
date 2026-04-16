@@ -9,7 +9,7 @@ def filter_by_length(input_fasta, output_normal, output_giants, max_length=2000)
     normal_path = Path(output_normal)
     giant_path = Path(output_giants)
     
-    sequences = list(SeqIO.parse(input_path, "fasta-blast"))
+    sequences = list(SeqIO.parse(input_path, "fasta"))
     
     normal = [s for s in sequences if len(s.seq) <= max_length]
     giants = [s for s in sequences if len(s.seq) > max_length]
