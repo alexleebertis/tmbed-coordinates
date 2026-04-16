@@ -2,7 +2,7 @@
 """
 TMbed Coordinate Parser - Extracts exact TM region positions
 Input: FASTA file with protein sequences
-Output: CSV with TM domain coordinates (start, end, type)
+Output: TSV with TM domain coordinates (start, end, type)
 """
 
 import pandas as pd
@@ -21,8 +21,10 @@ def run_tmbed_embed_predict(fasta_path, output_dir, batch_size=2):
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
     
-    embeddings_h5 = output_dir / "embeddings.h5"
-    predictions_txt = output_dir / "predictions.txt"
+    # FIXED: Unique filenames per chunk
+    input_basename = Path(fasta_path).stem
+    embeddings_h5 = output_dir / f"{input_basename}_embeddings.h5"
+    predictions_txt = output_dir / f"{input_basename}_predictions.txt"
     
     original_dir = os.getcwd()
     
@@ -71,144 +73,152 @@ def run_tmbed_embed_predict(fasta_path, output_dir, batch_size=2):
 def parse_tmbed_coordinates(pred_file, fasta_file):
     """
     Parse TMbed format 1 and extract exact coordinates of TM regions
-    
-    TMbed topology codes:
-    - H = Alpha-helix (TMH) - standard transmembrane helix
-    - h = Re-entrant helix  
-    - B = Beta-strand (TMB) - outer membrane beta barrel
-    - b = Re-entrant beta-strand
-    - S = Signal peptide
-    - I = Inside/cytoplasmic
-    - O = Outside/extracellular
-    - P = Pore (not used in standard output)
+    FIXED: Uses FASTA headers instead of corrupted TMbed prediction headers
     """
     
     results = []
     
-    # First, load sequences to get lengths
+    # Load protein IDs and sequences from FASTA (correct source)
+    fasta_records = list(SeqIO.parse(fasta_file, "fasta"))
+    protein_ids = []
     sequences = {}
-    for record in SeqIO.parse(fasta_file, "fasta"):
-        # Extract accession from header
+    
+    for record in fasta_records:
         header = record.id
         if '|' in header:
             parts = header.split('|')
-            if len(parts) >= 2:
-                acc = parts[1]
-            else:
-                acc = header
+            acc = parts[1] if len(parts) >= 2 else header
         else:
             acc = header.split()[0]
+        protein_ids.append(acc)
         sequences[acc] = str(record.seq)
     
-    # Parse TMbed output
+    # Parse TMbed predictions (topology only, ignore corrupted headers)
     with open(pred_file) as f:
         lines = f.readlines()
     
+    # Extract topology lines (every 3rd line starting from line 3)
+    # Format: header, sequence, topology, header, sequence, topology...
+    topology_entries = []
     i = 0
+    entry_idx = 0
+    
     while i < len(lines):
         line = lines[i].strip()
         
+        # Skip empty lines and comments
         if not line or line.startswith('#'):
             i += 1
             continue
         
+        # Header line (corrupted, ignore it)
         if line.startswith('>'):
-            # Header line: >ID description...
-            header = line[1:].split()[0]
-            
-            # Normalize ID to match FASTA
-            if '|' in header:
-                parts = header.split('|')
-                protein_id = parts[1] if len(parts) >= 2 else header
-            else:
-                protein_id = header
-            
             # Get sequence line
             i += 1
             if i >= len(lines):
                 break
-            sequence = lines[i].strip()
+            seq_line = lines[i].strip()
             
-            # Get topology line
+            # Get topology line (this is what we need)
             i += 1
             if i >= len(lines):
                 break
             topology = lines[i].strip()
             
-            # Extract TM regions with coordinates
-            tm_regions = []
-            in_tm = False
-            tm_start = 0
-            tm_type = None
-            
-            for idx, char in enumerate(topology):
-                # Check if we're entering or exiting a TM region
-                is_tm_char = char in ['H', 'h', 'B', 'b']
+            # Match with correct protein ID from FASTA
+            if entry_idx < len(protein_ids):
+                protein_id = protein_ids[entry_idx]
+                sequence = sequences[protein_id]
                 
-                if is_tm_char and not in_tm:
-                    # Start of new TM region
-                    in_tm = True
-                    tm_start = idx  # 0-indexed, will convert to 1-indexed
-                    tm_type = char
+                # Verify sequence length matches topology length
+                if len(topology) != len(sequence):
+                    print(f"Warning: Length mismatch for {protein_id}: seq={len(sequence)}, topo={len(topology)}")
                 
-                elif not is_tm_char and in_tm:
-                    # End of TM region
-                    in_tm = False
-                    tm_end = idx  # exclusive end, topology[tm_start:tm_end] is the TM
-                    
-                    # Map TM type
-                    type_map = {
-                        'H': 'TMH',      # Transmembrane helix
-                        'h': 'TMH_re',   # Re-entrant helix
-                        'B': 'TMB',      # Beta barrel
-                        'b': 'TMB_re'    # Re-entrant beta
-                    }
-                    
-                    tm_regions.append({
-                        'protein_id': protein_id,
-                        'tm_index': len(tm_regions) + 1,
-                        'start': tm_start + 1,  # Convert to 1-indexed (UniProt style)
-                        'end': tm_end,          # Inclusive end
-                        'length': tm_end - tm_start,
-                        'type': type_map.get(tm_type, 'unknown'),
-                        'topology_code': tm_type,
-                        'sequence': sequence[tm_start:tm_end]
-                    })
+                topology_entries.append({
+                    'protein_id': protein_id,
+                    'sequence': sequence,
+                    'topology': topology
+                })
+                entry_idx += 1
+        
+        i += 1
+    
+    # Process each entry to find TM regions
+    for entry in topology_entries:
+        protein_id = entry['protein_id']
+        sequence = entry['sequence']
+        topology = entry['topology']
+        
+        # Extract TM regions with coordinates
+        tm_regions = []
+        in_tm = False
+        tm_start = 0
+        tm_type = None
+        
+        for idx, char in enumerate(topology):
+            is_tm_char = char in ['H', 'h', 'B', 'b']
             
-            # Handle case where TM extends to end of sequence
-            if in_tm:
-                tm_end = len(topology)
-                type_map = {'H': 'TMH', 'h': 'TMH_re', 'B': 'TMB', 'b': 'TMB_re'}
+            if is_tm_char and not in_tm:
+                # Start of new TM region
+                in_tm = True
+                tm_start = idx
+                tm_type = char
+            
+            elif not is_tm_char and in_tm:
+                # End of TM region
+                in_tm = False
+                tm_end = idx
+                
+                type_map = {
+                    'H': 'TMH',
+                    'h': 'TMH_re',
+                    'B': 'TMB',
+                    'b': 'TMB_re'
+                }
+                
                 tm_regions.append({
                     'protein_id': protein_id,
                     'tm_index': len(tm_regions) + 1,
-                    'start': tm_start + 1,
+                    'start': tm_start + 1,  # 1-indexed
                     'end': tm_end,
                     'length': tm_end - tm_start,
                     'type': type_map.get(tm_type, 'unknown'),
                     'topology_code': tm_type,
                     'sequence': sequence[tm_start:tm_end]
                 })
-            
-            # Calculate summary stats
-            tm_count = len(tm_regions)
-            alpha_helices = sum(1 for r in tm_regions if r['type'] == 'TMH')
-            beta_barrels = sum(1 for r in tm_regions if r['type'] == 'TMB')
-            
-            results.append({
+        
+        # Handle case where TM extends to end of sequence
+        if in_tm:
+            tm_end = len(topology)
+            type_map = {'H': 'TMH', 'h': 'TMH_re', 'B': 'TMB', 'b': 'TMB_re'}
+            tm_regions.append({
                 'protein_id': protein_id,
-                'sequence_length': len(sequence),
-                'tm_count': tm_count,
-                'alpha_helices': alpha_helices,
-                'beta_barrels': beta_barrels,
-                'reentrant_helices': sum(1 for r in tm_regions if r['type'] == 'TMH_re'),
-                'has_tm': tm_count > 0,
-                'is_multipass': tm_count >= 2,
-                'topology_string': topology,
-                'tm_regions': tm_regions
+                'tm_index': len(tm_regions) + 1,
+                'start': tm_start + 1,
+                'end': tm_end,
+                'length': tm_end - tm_start,
+                'type': type_map.get(tm_type, 'unknown'),
+                'topology_code': tm_type,
+                'sequence': sequence[tm_start:tm_end]
             })
         
-        i += 1
+        # Calculate summary stats
+        tm_count = len(tm_regions)
+        alpha_helices = sum(1 for r in tm_regions if r['type'] == 'TMH')
+        beta_barrels = sum(1 for r in tm_regions if r['type'] == 'TMB')
+        
+        results.append({
+            'protein_id': protein_id,
+            'sequence_length': len(sequence),
+            'tm_count': tm_count,
+            'alpha_helices': alpha_helices,
+            'beta_barrels': beta_barrels,
+            'reentrant_helices': sum(1 for r in tm_regions if r['type'] == 'TMH_re'),
+            'has_tm': tm_count > 0,
+            'is_multipass': tm_count >= 2,
+            'topology_string': topology,
+            'tm_regions': tm_regions
+        })
     
     return results
 
@@ -243,20 +253,23 @@ def main():
     else:
         pred_file = run_tmbed_embed_predict(fasta_path, output_dir, args.batch_size)
     
+    # Get basename for output files
+    input_basename = fasta_path.stem
+    
     # Step 2: Parse coordinates
     print(f"\nParsing TM coordinates from {pred_file}...")
     results = parse_tmbed_coordinates(pred_file, fasta_path)
     
-    # Step 3: Export summary
+    # Step 3: Export summary - FIXED unique filename
     summary_df = pd.DataFrame([
         {k: v for k, v in r.items() if k != 'tm_regions'} 
         for r in results
     ])
-    summary_tsv = output_dir / "tmbed_summary.tsv"
+    summary_tsv = output_dir / f"{input_basename}_summary.tsv"
     summary_df.to_csv(summary_tsv, sep='\t', index=False)
     print(f"✓ Summary saved: {summary_tsv} ({len(summary_df)} proteins)")
     
-    # Step 4: Export detailed TM regions (flattened)
+    # Step 4: Export detailed TM regions (flattened) - FIXED unique filename
     all_regions = []
     for r in results:
         for region in r['tm_regions']:
@@ -264,7 +277,7 @@ def main():
     
     if all_regions:
         regions_df = pd.DataFrame(all_regions)
-        regions_tsv = output_dir / "tmbed_tm_regions.tsv"
+        regions_tsv = output_dir / f"{input_basename}_tm_regions.tsv"
         regions_df.to_csv(regions_tsv, sep='\t', index=False)
         print(f"✓ TM regions saved: {regions_tsv} ({len(all_regions)} regions)")
         
@@ -294,8 +307,8 @@ def main():
     
     print(f"\n{'='*60}")
     print(f"All outputs in: {output_dir}")
-    print(f"  - Summary: tmbed_summary.csv")
-    print(f"  - Regions: tmbed_tm_regions.csv")
+    print(f"  - Summary: {input_basename}_summary.tsv")
+    print(f"  - Regions: {input_basename}_tm_regions.tsv")
     print(f"{'='*60}")
 
 if __name__ == "__main__":

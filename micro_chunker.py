@@ -11,7 +11,7 @@ def split_fasta_to_micro_chunks(input_fasta, output_dir, chunk_size=5):
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Read all sequences using fasta-blast to handle comment lines
-    sequences = list(SeqIO.parse(input_path, "fasta-blast"))
+    sequences = list(SeqIO.parse(input_path, "fasta"))
     total = len(sequences)
     
     if total == 0:
