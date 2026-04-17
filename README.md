@@ -25,7 +25,7 @@ pip install pandas numpy biopython requests
 # Line 17: TMBED_REPO = Path("PATH_TO_YOUR_TMBED_REPO")
 
 # 3. Run full pipeline (example: set1)
-python tsv_to_fasta.py --tsv data/set1/set1_protein.tsv --header -o set1.fasta
+python tsv_to_fasta.py --tsv data/set1/set1_protein.tsv --header -o data/set1/set1.fasta
 
 python filter_long_proteins.py \
     --input data/set1/set1.fasta \
@@ -86,7 +86,7 @@ python tsv_to_fasta.py \
     --tsv data/your_file.tsv \
     --col 1 \
     --header \
-    -o output.fasta
+    -o data/output.fasta
 ```
 
 **Arguments:**
