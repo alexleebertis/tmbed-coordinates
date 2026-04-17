@@ -51,3 +51,9 @@ chunks/
 # OS
 .DS_Store
 Thumbs.db
+# Obsolete scripts (kept locally, not in repo)
+batch_process.sh
+process_chunk_clean.py
+resilient_runner.py
+tsv_to_csv.py
+view_progress.py
