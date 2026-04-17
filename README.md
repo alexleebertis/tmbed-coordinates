@@ -4,17 +4,57 @@ Extract exact transmembrane domain coordinates from protein sequences using [TMb
 
 ## Overview
 
-- Input: TSV with UniProt IDs → FASTA → TMbed predictions
-- Output: TSV files with exact 1-indexed TM region coordinates
-- Handles large datasets via **chunked processing** with giant protein filtering
-- Supports both **subdirectory** (rep1-style) and **flat file** (rep2-style) output structures
-- No API keys required (local processing)
+- **Input:** TSV with UniProt IDs → FASTA → TMbed predictions  
+- **Output:** TSV files with exact 1-indexed TM region coordinates
+- **Handles:** Large datasets via chunked processing, giant protein filtering (>2000aa)
+- **Features:** Automatic isoform handling (e.g., `A0FGR8-2`), headerless TSV support
+- **No API keys required** (local processing)
+
+---
+
+## Quick Start
+
+```bash
+# 1. Install dependencies
+git clone https://github.com/HUBioDataLab/TMbed.git
+cd TMbed && pip install -e .
+pip install pandas numpy biopython requests
+
+# 2. Configure path
+# Edit `tmbed_coords.py` and set TMBED_REPO to your local TMbed installation
+
+# 3. Run full pipeline (example: mem_glyco_rep1)
+python tsv_to_fasta.py --tsv data/mem_glyco_rep1/mem_glyco_rep1_protein.tsv --header -o glyco_rep1.fasta
+
+python filter_long_proteins.py \
+    --input data/mem_glyco_rep1/glyco_rep1.fasta \
+    --max-length 2000 \
+    --output-normal data/mem_glyco_rep1/mem_glyco_rep1_NORMAL.fasta \
+    --output-giants data/mem_glyco_rep1/mem_glyco_rep1_GIANTS.fasta
+
+python micro_chunker.py \
+    --input data/mem_glyco_rep1/mem_glyco_rep1_NORMAL.fasta \
+    --output-dir data/mem_glyco_rep1/mem_glyco_rep1_chunks \
+    --chunk-size 50
+
+# Process chunks (manual sequential loop for stability)
+for i in $(seq -w 000 158); do
+    python tmbed_coords.py \
+        --fasta data/mem_glyco_rep1/mem_glyco_rep1_chunks/chunk_$i.fasta \
+        --output-dir results/mem_glyco_rep1/
+done
+
+# Aggregate results
+python aggregate_results.py results/mem_glyco_rep1/ --mode flat
+```
+
+---
 
 ## Installation
 
 **Prerequisites:**
 - Python 3.8+
-- CUDA GPU (8GB+ VRAM recommended, tested on RTX 5070)
+- CUDA GPU (8GB+ VRAM recommended)
 - TMbed installed locally
 
 **Setup:**
@@ -32,224 +72,285 @@ pip install pandas numpy biopython requests
 TMBED_REPO = Path("/path/to/your/TMbed")
 ```
 
-## Usage
+---
 
-### 1. Convert TSV to FASTA
+## Pipeline Steps
+
+### Step 1: Convert TSV to FASTA
+
+Extracts protein sequences from UniProt using IDs in your TSV file.
+
 ```bash
-python tsv_to_fasta.py -i proteins.tsv -c "Protein ID" -o output.fasta --skip-contam
+python tsv_to_fasta.py \
+    --tsv data/your_file.tsv \
+    --col 1 \
+    --header \
+    -o output.fasta
 ```
 
 **Arguments:**
-- `--tsv`: Input TSV file
-- `--col`: Column with UniProt IDs (default: "Protein ID")
-- `--output`: Output FASTA file
-- `--skip-contam`: Skip contaminant rows
+- `--tsv`: Input TSV file (no header by default, use `--header` if first row is column names)
+- `--col`: Column **index** (0-based) containing UniProt IDs. Default: `1` (second column)
+- `--header`: Use if TSV has a header row
+- `--output`: Output FASTA filename
 
-### 2. Filter Giant Proteins (Optional but Recommended)
-For datasets with proteins >2000 amino acids (causes TMbed OOM errors):
+**Features:**
+- ✅ Handles isoform IDs automatically (`A0FGR8-2` → fetches isoform 2 from UniProt)
+- ✅ Extracts clean IDs from `contam_sp|O77727|K1C15_SHEEP` format
+- ✅ Processes headerless proteomics TSVs (common from MaxQuant/Proteome Discoverer)
+
+---
+
+### Step 2: Filter Giant Proteins (Optional but Recommended)
+
+TMbed crashes on proteins >2000 amino acids (OOM errors). Filter them out:
+
 ```bash
 python filter_long_proteins.py \
     --input proteins.fasta \
+    --max-length 2000 \
     --output-normal proteins_NORMAL.fasta \
-    --output-giants proteins_GIANTS.fasta \
-    --max-length 2000
+    --output-giants proteins_GIANTS.fasta
 ```
 
 **Arguments:**
 - `--input`: Input FASTA file
-- `--output-normal`: Output file for proteins ≤ max-length (process these)
-- `--output-giants`: Output file for proteins > max-length (excluded from TMbed)
+- `--output-normal`: Output file for proteins ≤ max-length (process these with TMbed)
+- `--output-giants`: Output file for proteins > max-length (exclude from TMbed)
 - `--max-length`: Length threshold (default: 2000)
 
-### 3. Split Large FASTA (Optional)
-For large datasets, split into manageable chunks:
-```bash
-# Standard chunks (150 proteins each)
-python split_fasta.py -i proteins_NORMAL.fasta -o chunks/ -n 150
+---
 
-# Micro-chunks for problematic sections (50 proteins each)
+### Step 3: Chunk Large FASTA
+
+For large datasets, split into manageable chunks to prevent OOM errors:
+
+**Option A: Micro-chunks (recommended for 1000-2000aa proteins)**
+```bash
 python micro_chunker.py \
     --input proteins_NORMAL.fasta \
-    --output-dir micro_chunks/ \
+    --output-dir chunks/ \
     --chunk-size 50
 ```
 
-**Note:** Use `micro_chunker.py` when encountering OOM errors or for proteins 1000-2000aa range.
+**Option B: Standard chunks (for smaller proteins <1000aa)**
+```bash
+python split_fasta.py \
+    -i proteins_NORMAL.fasta \
+    -o chunks/ \
+    -n 150
+```
 
-### 4. Run TMbed
+**Recommendations:**
+- Proteins 1500-2000aa: Use `--chunk-size 50` (micro-chunks)
+- Proteins 500-1500aa: Use `--chunk-size 100`
+- Proteins <500aa: Use `--chunk-size 150`
+
+---
+
+### Step 4: Run TMbed
 
 **Single file:**
 ```bash
-python tmbed_coords.py -f proteins.fasta -o results/ --batch-size 2
+python tmbed_coords.py \
+    --fasta proteins.fasta \
+    --output-dir results/ \
+    --batch-size 2
 ```
 
-**Batch processing (multiple chunks):**
+**Batch processing (sequential loop - recommended for stability):**
 ```bash
-./batch_process.sh chunks/ results/
-```
+# Count how many chunks you have
+ls chunks/ | wc -l
 
-**Sequential loop for safety:**
-```bash
+# Process each chunk sequentially (change 158 to your max chunk number)
 for i in $(seq -w 000 158); do
+    echo "Processing chunk $i..."
     python tmbed_coords.py \
         --fasta chunks/chunk_$i.fasta \
-        --output-dir results/
+        --output-dir results/ \
+        --batch-size 2
 done
 ```
 
 **Arguments:**
-- `--fasta`: Input FASTA
-- `--output-dir`: Output directory (default: tmbed_coordinates)
-- `--batch-size`: Batch size (default: 2, for RTX 5070)
-- `--skip-tmbed`: Use existing predictions.txt
-- `--predictions`: Path to existing predictions.txt
+- `--fasta`: Input FASTA file
+- `--output-dir`: Output directory for predictions (default: `tmbed_coordinates`)
+- `--batch-size`: Batch size for embedding generation (default: 2, for RTX 5070)
+- `--skip-tmbed`: Use existing `predictions.txt` (skip re-running TMbed)
+- `--predictions`: Path to existing `predictions.txt` file
 
-### 5. Aggregate Results
+---
 
-**Auto-detect structure (subdirectories vs flat files):**
+### Step 5: Aggregate Results
+
+Combine all chunk outputs into summary files:
+
+**Auto-detect structure:**
 ```bash
-python aggregate_results.py results/
+python aggregate_results.py results/ --mode auto
 ```
 
-**Force specific modes:**
+**Force flat file structure:**
 ```bash
-# For flat file structure (rep2-style: all .tsv files in one directory)
-python aggregate_results.py results/ --mode flat --output-prefix rep2
+python aggregate_results.py results/ --mode flat --output-prefix rep1
+```
 
-# For subdirectory structure (rep1-style: chunk_000/, chunk_001/, etc.)
+**Force subdirectory structure:**
+```bash
 python aggregate_results.py results/ --mode recursive
-
-# Custom file patterns
-python aggregate_results.py results/ --summary-name "*_summary.tsv" --regions-name "*_regions.tsv"
 ```
 
-**Arguments:**
-- `results_dir`: Directory containing TMbed results
-- `--mode`: `auto` (default), `flat`, or `recursive`
-- `--output-prefix`: Prefix for output files (e.g., `rep2` → `rep2_summary.tsv`)
-- `--summary-name`: Pattern for summary files (default: `tmbed_summary.tsv`)
-- `--regions-name`: Pattern for regions files (default: `tmbed_tm_regions.tsv`)
+**Output files:**
+- `{prefix}_summary.tsv` - Per-protein statistics (has TM, TM count, etc.)
+- `{prefix}_tm_regions.tsv` - Per-TM-region coordinates (start, end, type, sequence)
 
-### 6. Convert to CSV for Excel (Optional)
-For viewing/filtering in Microsoft Excel:
+---
+
+## Complete Pipeline Example
+
 ```bash
-# Single file
-python tsv_to_csv.py input.tsv output.csv
+# Configuration
+REP="mem_glyco_rep1"
+TSV="data/${REP}/${REP}_protein.tsv"
+RESULTS="results/${REP}"
 
-# Convert all TSVs in directory
-python tsv_to_csv.py results/ --dir
+# 1. TSV → FASTA
+python tsv_to_fasta.py --tsv ${TSV} --header --col 1 -o ${REP}.fasta
+
+# 2. Filter giants
+python filter_long_proteins.py \
+    --input ${REP}.fasta \
+    --max-length 2000 \
+    --output-normal data/${REP}/${REP}_NORMAL.fasta \
+    --output-giants data/${REP}/${REP}_GIANTS.fasta
+
+# 3. Chunk
+python micro_chunker.py \
+    --input data/${REP}/${REP}_NORMAL.fasta \
+    --output-dir data/${REP}/${REP}_chunks \
+    --chunk-size 50
+
+# 4. Process chunks (adjust 158 to your actual chunk count)
+mkdir -p ${RESULTS}
+for i in $(seq -w 000 158); do
+    python tmbed_coords.py \
+        --fasta data/${REP}/${REP}_chunks/chunk_$i.fasta \
+        --output-dir ${RESULTS}/
+done
+
+# 5. Aggregate
+python aggregate_results.py ${RESULTS}/ --mode flat --output-prefix ${REP}
+
+# 6. Verify (optional)
+python diagnose_missing.py  # Check for data integrity
 ```
 
-**Note:** CSV files are disposable copies. Original TSVs remain the master data.
+---
 
-## Directory Structure Examples
+## Output File Formats
 
-### Rep1-style (subdirectories):
-```
-results/
-├── chunk_000/
-│   ├── tmbed_summary.tsv
-│   └── tmbed_tm_regions.tsv
-├── chunk_001/
-│   ├── tmbed_summary.tsv
-│   └── tmbed_tm_regions.tsv
-└── all_proteins_summary.tsv  (aggregated)
-```
+### `{prefix}_summary.tsv`
 
-### Rep2-style (flat files):
-```
-results/
-├── rep2_NORMAL_micro_000_summary.tsv
-├── rep2_NORMAL_micro_000_tm_regions.tsv
-├── rep2_NORMAL_micro_001_summary.tsv
-├── rep2_NORMAL_micro_001_tm_regions.tsv
-└── rep2_summary.tsv  (aggregated)
-```
-
-## Output Files
-
-### tmbed_summary.tsv
 | Column | Description |
 |--------|-------------|
-| protein_id | UniProt accession |
-| sequence_length | Protein length (AA) |
-| tm_count | Number of TM domains |
-| alpha_helices | Count of alpha-helical TMs |
-| beta_barrels | Count of beta-barrel TMs |
-| has_tm | Has ≥1 TM domain |
-| is_multipass | Has ≥2 TM domains |
-| topology_string | Full topology prediction |
+| `protein_id` | UniProt accession |
+| `sequence_length` | Protein length (AA) |
+| `tm_count` | Number of TM domains detected |
+| `alpha_helices` | Count of alpha-helical TMs |
+| `beta_barrels` | Count of beta-barrel TMs |
+| `reentrant_helices` | Count of re-entrant helices |
+| `has_tm` | Boolean: has ≥1 TM domain |
+| `is_multipass` | Boolean: has ≥2 TM domains |
+| `topology_string` | Full topology prediction code |
 
-### tmbed_tm_regions.tsv
+### `{prefix}_tm_regions.tsv`
+
 | Column | Description |
 |--------|-------------|
-| protein_id | UniProt accession |
-| tm_index | TM domain number (1-indexed) |
-| start | Start position (1-indexed) |
-| end | End position (inclusive) |
-| length | Length in amino acids |
-| type | TM type (TMH/TMB/TMH_re/TMB_re) |
-| topology_code | Original code (H/h/B/b) |
-| sequence | Amino acid sequence |
+| `protein_id` | UniProt accession |
+| `tm_index` | TM domain number (1-indexed) |
+| `start` | Start position (1-indexed, UniProt-style) |
+| `end` | End position (inclusive) |
+| `length` | Length in amino acids |
+| `type` | TM type: `TMH` (alpha-helix), `TMB` (beta-barrel), `TMH_re`/`TMB_re` (re-entrant) |
+| `topology_code` | Original code: `H`, `h`, `B`, `b` |
+| `sequence` | Amino acid sequence of TM region |
 
-## Example Data
+**Note:** Proteins with `has_tm=False` (no transmembrane regions) appear in the summary file but NOT in the TM regions file. This is expected behavior.
 
-Example input and output files are provided in the `examples/` directory:
-
-- `examples/chunk_000.fasta` - Sample input proteins from UniProt
-- `examples/chunk_000/tmbed_summary.tsv` - Protein-level summary statistics
-- `examples/chunk_000/tmbed_tm_regions.tsv` - Detailed TM region coordinates
-
-### How to Read the Example Files
-
-**View FASTA file (first 3 proteins):**
-```bash
-head -9 examples/chunk_000.fasta
-# Format: >header line, sequence line, empty line (repeated)
-```
-
-**View summary statistics:**
-```bash
-column -t examples/chunk_000/tmbed_summary.tsv | head -10
-# Key columns:
-#   - protein_id: UniProt accession (e.g., P00533)
-#   - tm_count: Number of TM domains detected
-#   - has_tm: True if protein has ≥1 TM domain
-#   - is_multipass: True if protein has ≥2 TM domains
-```
-
-**View TM region coordinates:**
-```bash
-column -t examples/chunk_000/tmbed_tm_regions.tsv | head -10
-# Key columns:
-#   - start/end: 1-indexed amino acid positions (UniProt-style)
-#   - type: TMH (alpha-helix), TMB (beta-barrel), or re-entrant variants
-#   - sequence: Amino acids in the transmembrane region
-```
-
-**Quick stats from example:**
-```bash
-# Count proteins with TM domains
-grep -c "True" examples/chunk_000/tmbed_summary.tsv
-
-# Count total TM regions
-tail -n +2 examples/chunk_000/tmbed_tm_regions.tsv | wc -l
-
-# Find multi-pass proteins (≥2 TM domains)
-awk -F'\t' '$8=="True"' examples/chunk_000/tmbed_summary.tsv | head
-```
+---
 
 ## TMbed Topology Codes
 
 | Code | Type | Description |
 |------|------|-------------|
-| H | TMH | Alpha-helix transmembrane |
-| h | TMH_re | Re-entrant alpha-helix |
-| B | TMB | Beta-strand (outer membrane barrel) |
-| b | TMB_re | Re-entrant beta-strand |
-| S | SP | Signal peptide |
-| I | Inside | Cytoplasmic |
-| O | Outside | Extracellular |
+| `H` | TMH | Alpha-helix transmembrane |
+| `h` | TMH_re | Re-entrant alpha-helix |
+| `B` | TMB | Beta-strand (outer membrane barrel) |
+| `b` | TMB_re | Re-entrant beta-strand |
+| `S` | SP | Signal peptide |
+| `I` | Inside | Cytoplasmic |
+| `O` | Outside | Extracellular |
+
+---
+
+## Troubleshooting
+
+### Out of Memory (OOM)
+```bash
+# Reduce batch size
+python tmbed_coords.py -f proteins.fasta -o results/ --batch-size 1
+
+# Use smaller chunks
+python micro_chunker.py --input proteins.fasta --output-dir micro/ --chunk-size 25
+```
+
+### Giant Proteins Cause Failures
+```bash
+# Filter out proteins >2000aa before processing
+python filter_long_proteins.py --input big.fasta --output-normal normal.fasta --output-giants giants.fasta
+```
+
+### Missing Proteins in TM Regions File
+Run the diagnostic script:
+```bash
+python diagnose_missing.py
+```
+
+**Expected behavior:** Proteins with `tm_count=0` (no transmembrane domains) appear in the summary file but NOT in the TM regions file. Only proteins with `has_tm=True` have coordinate entries.
+
+### File Not Found / Path Issues
+- Use absolute paths when possible
+- Ensure output directories exist (auto-created by most scripts)
+- Check file permissions: `chmod +x *.py`
+
+### Duplicate Protein IDs
+If all proteins show the same ID (e.g., `O00762`):
+- **Cause:** FASTA parsing format mismatch
+- **Fix:** Scripts now use proper `SeqIO.parse(path, "fasta")` format
+
+---
+
+## Repository Structure
+
+```
+tmbed-coordinates/
+├── tsv_to_fasta.py              # Convert TSV to FASTA (handles isoforms)
+├── filter_long_proteins.py      # Filter giants (>2000aa)
+├── micro_chunker.py            # Create small chunks (50 proteins)
+├── split_fasta.py              # Standard chunking (150 proteins)
+├── tmbed_coords.py             # Main TMbed runner
+├── aggregate_results.py        # Combine chunk outputs
+├── diagnose_missing.py         # Data integrity checker
+├── examples/                   # Example inputs/outputs
+├── data/                       # Input data (gitignored)
+└── results/                    # Output directory (gitignored)
+```
+
+**Note:** This repo is cleaned of temporary/development scripts. Core pipeline only.
+
+---
 
 ## System Requirements
 
@@ -257,57 +358,18 @@ awk -F'\t' '$8=="True"' examples/chunk_000/tmbed_summary.tsv | head
 - **GPU:** CUDA, 8GB+ VRAM (tested on RTX 5070)
 - **RAM:** 16GB+ for large datasets
 - **Storage:** ~1GB per 1,000 proteins
+- **OS:** Linux/WSL (Windows subsystem for Linux)
 
 **Performance:** ~2-3 min per 150-protein chunk on RTX 5070
 
-## Troubleshooting
-
-### Out of Memory
-```bash
-# Reduce batch size
-python tmbed_coords.py -f proteins.fasta -o results/ --batch-size 1
-
-# Use micro-chunking (smaller chunks)
-python micro_chunker.py --input proteins.fasta --output-dir micro/ --chunk-size 25
-```
-
-### Giant Proteins Cause Failures
-Filter out proteins >2000aa before processing:
-```bash
-python filter_long_proteins.py --input big.fasta --output-normal normal.fasta --output-giants giants.fasta
-```
-
-### Duplicate Protein IDs in Output
-If all proteins show the same ID (e.g., O00762):
-- **Cause:** Using `fasta-blast` format instead of `fasta` format in parsing
-- **Fix:** Ensure scripts use `SeqIO.parse(path, "fasta")` not `SeqIO.parse(path, "fasta-blast")`
-
-### File Not Found
-- Use absolute paths
-- Ensure output directories exist (auto-created)
-- Check file permissions
-
-### Missing TMbed
-- Verify `TMBED_REPO` path in `tmbed_coords.py`
-- Check CUDA: `python -c "import torch; print(torch.cuda.is_available())"`
-
-## Pipeline Scripts Reference
-
-| Script | Purpose | Key Features |
-|--------|---------|--------------|
-| `tsv_to_fasta.py` | Convert TSV to FASTA | UniProt ID extraction, contaminant filtering |
-| `filter_long_proteins.py` | Length-based filtering | Separates normal (≤2000aa) from giants (>2000aa) |
-| `split_fasta.py` | Standard chunking | 150 proteins/chunk default |
-| `micro_chunker.py` | Fine-grained chunking | 50 proteins/chunk for OOM-prone data |
-| `tmbed_coords.py` | Main TMbed runner | Embedding gen + coordinate extraction |
-| `aggregate_results.py` | Combine outputs | Handles flat & recursive structures |
-| `tsv_to_csv.py` | Excel conversion | Disposable CSVs for viewing/filtering |
-| `batch_process.sh` | Parallel batching | Bash wrapper for multiple chunks |
+---
 
 ## Citation
 
 - **TMbed:** Remmert et al. (2022) *Bioinformatics* 38(22):5110-5113
 - **ProtT5:** Elnaggar et al. (2021) *IEEE TPAMI*
+
+---
 
 ## License
 
