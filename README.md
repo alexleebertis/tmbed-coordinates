@@ -22,30 +22,31 @@ pip install pandas numpy biopython requests
 
 # 2. Configure path
 # Edit `tmbed_coords.py` and set TMBED_REPO to your local TMbed installation
+# Line 17: TMBED_REPO = Path("PATH_TO_YOUR_TMBED_REPO")
 
-# 3. Run full pipeline (example: mem_glyco_rep1)
-python tsv_to_fasta.py --tsv data/mem_glyco_rep1/mem_glyco_rep1_protein.tsv --header -o glyco_rep1.fasta
+# 3. Run full pipeline (example: set1)
+python tsv_to_fasta.py --tsv data/set1/set1_protein.tsv --header -o set1.fasta
 
 python filter_long_proteins.py \
-    --input data/mem_glyco_rep1/glyco_rep1.fasta \
+    --input data/set1/set1.fasta \
     --max-length 2000 \
-    --output-normal data/mem_glyco_rep1/mem_glyco_rep1_NORMAL.fasta \
-    --output-giants data/mem_glyco_rep1/mem_glyco_rep1_GIANTS.fasta
+    --output-normal data/set1/set1_NORMAL.fasta \
+    --output-giants data/set1/set1_GIANTS.fasta
 
 python micro_chunker.py \
-    --input data/mem_glyco_rep1/mem_glyco_rep1_NORMAL.fasta \
-    --output-dir data/mem_glyco_rep1/mem_glyco_rep1_chunks \
+    --input data/set1/set1_NORMAL.fasta \
+    --output-dir data/set1/set1_chunks \
     --chunk-size 50
 
 # Process chunks (manual sequential loop for stability)
 for i in $(seq -w 000 158); do
     python tmbed_coords.py \
-        --fasta data/mem_glyco_rep1/mem_glyco_rep1_chunks/chunk_$i.fasta \
-        --output-dir results/mem_glyco_rep1/
+        --fasta data/set1/set1_chunks/chunk_$i.fasta \
+        --output-dir results/set1/
 done
 
 # Aggregate results
-python aggregate_results.py results/mem_glyco_rep1/ --mode flat
+python aggregate_results.py results/set1/ --mode flat
 ```
 
 ---
@@ -211,7 +212,7 @@ python aggregate_results.py results/ --mode recursive
 
 ```bash
 # Configuration
-REP="mem_glyco_rep1"
+REP="set1"
 TSV="data/${REP}/${REP}_protein.tsv"
 RESULTS="results/${REP}"
 
