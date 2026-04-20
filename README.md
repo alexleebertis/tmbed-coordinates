@@ -61,9 +61,9 @@ Copy-paste this entire block and edit the `CONFIG` section for your replicate:
 # ============================================
 # CONFIG - Change these for each replicate
 # ============================================
-REP_NAME="mem_glyco_rep3"  # Change to rep1, rep2, etc.
-TSV_FILE="data/${REP_NAME}/${REP_NAME}_protein.tsv"
-BASE_DIR="/home/alexlee/work/onboarding/surfaceome_topology/tmbed-coordinates"
+REP_NAME="experiment_rep1"  # Change to your replicate name
+BASE_DIR="."                # Project root directory
+TSV_FILE="${BASE_DIR}/data/${REP_NAME}/${REP_NAME}_protein.tsv"
 
 # ============================================
 # 1. TSV → FASTA
@@ -71,7 +71,7 @@ BASE_DIR="/home/alexlee/work/onboarding/surfaceome_topology/tmbed-coordinates"
 echo "Step 1: Converting TSV to FASTA..."
 mkdir -p ${BASE_DIR}/data/${REP_NAME}
 python ${BASE_DIR}/tsv_to_fasta.py \
-    --tsv ${BASE_DIR}/${TSV_FILE} \
+    --tsv ${TSV_FILE} \
     --header \
     --col 1 \
     -o ${BASE_DIR}/data/${REP_NAME}/${REP_NAME}_protein.fasta
@@ -125,125 +125,6 @@ python ${BASE_DIR}/aggregate_results.py \
 
 echo "✓ Pipeline complete for ${REP_NAME}"
 echo "Output: ${BASE_DIR}/results/${REP_NAME}/${REP_NAME}_all_summary.tsv"
-```
-
----
-
-## Pipeline Steps (Detailed)
-
-### Step 1: Convert TSV to FASTA
-
-Extracts protein sequences from UniProt using IDs in your TSV file.
-
-```bash
-python tsv_to_fasta.py \
-    --tsv data/your_file.tsv \
-    --col 1 \
-    --header \
-    -o output.fasta
-```
-
-**Arguments:**
-- `--tsv`: Input TSV file
-- `--col`: Column **index** (0-based) containing UniProt IDs. Default: `1`
-- `--header`: Use if TSV has a header row
-- `--output`: Output FASTA filename
-
-**Features:**
-- ✅ Handles isoform IDs automatically (`A0FGR8-2` → fetches isoform 2)
-- ✅ Extracts clean IDs from `contam_sp|O77727|K1C15_SHEEP` format
-- ✅ Processes headerless proteomics TSVs
-
----
-
-### Step 2: Filter Giant Proteins
-
-TMbed crashes on proteins >2000 amino acids. Filter them out:
-
-```bash
-python filter_long_proteins.py \
-    --input proteins.fasta \
-    --max-length 2000 \
-    --output-normal proteins_NORMAL.fasta \
-    --output-giants proteins_GIANTS.fasta
-```
-
-**Arguments:**
-- `--input`: Input FASTA file
-- `--output-normal`: Proteins ≤ max-length (process with TMbed)
-- `--output-giants`: Proteins > max-length (exclude from TMbed)
-- `--max-length`: Length threshold (default: 2000)
-
----
-
-### Step 3: Chunk Large FASTA
-
-Split into manageable chunks to prevent OOM errors:
-
-**Micro-chunks (recommended for 1000-2000aa proteins):**
-```bash
-python micro_chunker.py \
-    --input proteins_NORMAL.fasta \
-    --output-dir chunks/ \
-    --chunk-size 50
-```
-
-**Standard chunks (for <1000aa proteins):**
-```bash
-python split_fasta.py \
-    -i proteins_NORMAL.fasta \
-    -o chunks/ \
-    -n 150
-```
-
-**Recommendations:**
-- Proteins 1500-2000aa: `--chunk-size 50`
-- Proteins 500-1500aa: `--chunk-size 100`
-- Proteins <500aa: `--chunk-size 150`
-
----
-
-### Step 4: Run TMbed
-
-**Single file:**
-```bash
-python tmbed_coords.py \
-    --fasta proteins.fasta \
-    --output-dir results/ \
-    --batch-size 2
-```
-
-**Batch processing (sequential loop):**
-```bash
-N_CHUNKS=$(ls chunks/ | wc -l)
-for i in $(seq -w 000 $((${N_CHUNKS}-1))); do
-    python tmbed_coords.py \
-        --fasta chunks/chunk_$i.fasta \
-        --output-dir results/ \
-        --batch-size 2
-done
-```
-
-**Arguments:**
-- `--fasta`: Input FASTA file
-- `--output-dir`: Output directory (default: `tmbed_coordinates`)
-- `--batch-size`: Batch size for embedding generation (default: 2)
-- `--skip-tmbed`: Use existing `predictions.txt`
-
----
-
-### Step 5: Aggregate Results
-
-Combine all chunk outputs:
-
-```bash
-python aggregate_results.py \
-    results/ \
-    --mode flat \
-    --summary-name "*_summary.tsv" \
-    --regions-name "*_tm_regions.tsv" \
-    --output-prefix my_experiment
-```
 
 **Arguments:**
 - `--mode`: `flat` (all files in one dir) or `recursive` (subdirectories)
