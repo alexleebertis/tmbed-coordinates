@@ -38,8 +38,13 @@ tmbed_coordinates/
 results/
 data/
 chunks/
+*_chunks/
 *.txt
 !predictions.txt
+predictions.txt
+embeddings.npy
+*.fasta
+!example.fasta
 
 # IDE
 .vscode/
