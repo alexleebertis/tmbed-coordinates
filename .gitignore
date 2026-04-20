@@ -69,3 +69,18 @@ process_chunk_clean.py
 resilient_runner.py
 tsv_to_csv.py
 view_progress.py
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Debug/temp scripts
+diagnose.py
+diagnostic.py
+run_*.sh
+test_*.py
+debug_*.py
+
+# Examples
+examples/
